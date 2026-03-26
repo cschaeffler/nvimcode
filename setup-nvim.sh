@@ -2,39 +2,15 @@
 set -euo pipefail
 
 # ============================================================
-# Neovim bootstrap for development environments
+# Neovim bootstrap for Fedora + Ubuntu/WSL
 #
-# Features:
-# - Detect distro and install required packages
-# - Install Neovim if missing
-# - Install lazy.nvim
-# - Configure:
-#   * nvim-tree file explorer
-#   * telescope search
-#   * lualine status bar
-#   * treesitter
-#   * LSP + completion
-#   * formatting
-#   * Avante with OpenAI-compatible API endpoint
-# - Add aliases:
-#   * n -> nvim
-#   * vim -> nvim
-# - Bindings:
-#   * Ctrl+n       toggle file tree
-#   * Ctrl+f       live grep
-#   * Ctrl+Left    focus left pane
-#   * Ctrl+Right   focus right pane
-#   * Ctrl+Up      focus upper pane
-#   * Ctrl+Down    focus lower pane
-# - AI bindings:
-#   * <leader>la    Ask
-#   * <leader>llm   Ask
-#   * <leader>lc    Chat
-#   * <leader>chat  Chat
-# - Open files from file tree in a NEW TAB by default
-# - Backup every existing file or directory it modifies
-#
-# Run as normal user, not root.
+# Highlights:
+# - Installs dependencies per distro
+# - Installs modern Neovim (0.11+) user-local if system nvim is missing/too old
+# - Sets up lazy.nvim, nvim-tree, telescope, lualine, treesitter
+# - Sets up LSP, completion, formatting, Avante
+# - Adds aliases n -> nvim and vim -> nvim
+# - Backs up modified files/directories
 # ============================================================
 
 log()  { printf "\033[1;34m[INFO]\033[0m %s\n" "$*"; }
@@ -43,6 +19,11 @@ err()  { printf "\033[1;31m[ERR ]\033[0m %s\n" "$*" >&2; }
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1
+}
+
+version_ge() {
+  # returns 0 if $1 >= $2
+  [ "$(printf '%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]
 }
 
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
@@ -90,6 +71,17 @@ append_line_if_missing() {
     printf "\n%s\n" "$line" >> "$file"
     log "Added to ${file}: ${line}"
   fi
+}
+
+detect_arch() {
+  case "$(uname -m)" in
+    x86_64|amd64) NVIM_ARCH="x86_64" ;;
+    aarch64|arm64) NVIM_ARCH="arm64" ;;
+    *)
+      err "Unsupported architecture: $(uname -m)"
+      exit 1
+      ;;
+  esac
 }
 
 detect_distro() {
@@ -192,7 +184,7 @@ pkg_install() {
 }
 
 ensure_local_bin() {
-  mkdir -p "${HOME}/.local/bin"
+  mkdir -p "${HOME}/.local/bin" "${HOME}/.local/opt"
 
   case ":${PATH}:" in
     *":${HOME}/.local/bin:"*) ;;
@@ -208,7 +200,6 @@ install_system_packages() {
 
   case "${PKG_MODE}" in
     apt)
-      require_cmd nvim    || pkgs+=(neovim)
       require_cmd git     || pkgs+=(git)
       require_cmd curl    || pkgs+=(curl)
       require_cmd rg      || pkgs+=(ripgrep)
@@ -219,7 +210,6 @@ install_system_packages() {
       require_cmd python3 || pkgs+=(python3 python3-pip python3-venv)
       ;;
     dnf|yum)
-      require_cmd nvim    || pkgs+=(neovim)
       require_cmd git     || pkgs+=(git)
       require_cmd curl    || pkgs+=(curl)
       require_cmd rg      || pkgs+=(ripgrep)
@@ -230,7 +220,6 @@ install_system_packages() {
       require_cmd python3 || pkgs+=(python3 python3-pip)
       ;;
     pacman)
-      require_cmd nvim    || pkgs+=(neovim)
       require_cmd git     || pkgs+=(git)
       require_cmd curl    || pkgs+=(curl)
       require_cmd rg      || pkgs+=(ripgrep)
@@ -240,7 +229,6 @@ install_system_packages() {
       require_cmd python3 || pkgs+=(python python-pip)
       ;;
     zypper)
-      require_cmd nvim    || pkgs+=(neovim)
       require_cmd git     || pkgs+=(git)
       require_cmd curl    || pkgs+=(curl)
       require_cmd rg      || pkgs+=(ripgrep)
@@ -264,6 +252,53 @@ install_system_packages() {
     ln -sf "$(command -v fdfind)" "${HOME}/.local/bin/fd"
     log "Created ~/.local/bin/fd -> fdfind"
   fi
+}
+
+install_modern_neovim() {
+  detect_arch
+
+  local need_install="yes"
+  if require_cmd nvim; then
+    local current_ver
+    current_ver="$(nvim --version | head -n1 | awk '{print $2}' | sed 's/^v//')"
+    if version_ge "${current_ver}" "0.11.0"; then
+      log "Neovim ${current_ver} is new enough."
+      need_install="no"
+    else
+      warn "Neovim ${current_ver} is too old. Installing newer user-local Neovim."
+    fi
+  else
+    log "Neovim not found. Installing newer user-local Neovim."
+  fi
+
+  if [ "${need_install}" = "no" ]; then
+    return 0
+  fi
+
+  local install_dir="${HOME}/.local/opt/nvim"
+  local tmpdir tarball url extracted_dir
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "${tmpdir}"' RETURN
+
+  tarball="nvim-linux-${NVIM_ARCH}.tar.gz"
+  url="https://github.com/neovim/neovim/releases/latest/download/${tarball}"
+
+  log "Downloading ${url}"
+  curl -fL "${url}" -o "${tmpdir}/${tarball}"
+
+  rm -rf "${install_dir}"
+  tar -xzf "${tmpdir}/${tarball}" -C "${tmpdir}"
+
+  extracted_dir="${tmpdir}/nvim-linux-${NVIM_ARCH}"
+  if [ ! -d "${extracted_dir}" ]; then
+    err "Expected extracted directory not found: ${extracted_dir}"
+    exit 1
+  fi
+
+  mv "${extracted_dir}" "${install_dir}"
+  ln -sf "${install_dir}/bin/nvim" "${HOME}/.local/bin/nvim"
+
+  log "Installed modern Neovim to ${install_dir}"
 }
 
 install_lazy_nvim() {
@@ -310,10 +345,9 @@ setup_user_npm_prefix() {
   if ! require_cmd npm; then
     return 0
   fi
-  
-  mkdir -p "${HOME}/.local/bin"
-  mkdir -p "${HOME}/.local/lib"
-  mkdir -p "${HOME}/.local/share"
+
+  mkdir -p "${HOME}/.local/bin" "${HOME}/.local/lib" "${HOME}/.local/share"
+
   append_line_if_missing "${HOME}/.bashrc" 'export PATH="$HOME/.local/bin:$PATH"'
   append_line_if_missing "${HOME}/.bashrc" 'export NPM_CONFIG_PREFIX="$HOME/.local"'
 
@@ -321,6 +355,7 @@ setup_user_npm_prefix() {
     append_line_if_missing "${HOME}/.zshrc" 'export PATH="$HOME/.local/bin:$PATH"'
     append_line_if_missing "${HOME}/.zshrc" 'export NPM_CONFIG_PREFIX="$HOME/.local"'
   fi
+
   npm config set prefix "${HOME}/.local" --location=user
 }
 
@@ -339,9 +374,6 @@ write_nvim_config() {
   mkdir -p "${config_dir}"
 
   cat > "${init_file}" <<'EOF'
--- ==========================================================
--- Base options
--- ==========================================================
 vim.g.mapleader = " "
 
 vim.g.loaded_netrw = 1
@@ -365,15 +397,9 @@ vim.opt.tabstop = 2
 vim.opt.softtabstop = 2
 vim.opt.smartindent = true
 
--- ==========================================================
--- lazy.nvim bootstrap
--- ==========================================================
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
 vim.opt.rtp:prepend(lazypath)
 
--- ==========================================================
--- Early keymaps
--- ==========================================================
 local map = vim.keymap.set
 local opts = { noremap = true, silent = true }
 
@@ -394,17 +420,19 @@ map("n", "<leader>tq", "<cmd>tabclose<CR>", opts)
 
 require("lazy").setup({
   { "nvim-lua/plenary.nvim" },
-  {
-    "akinsho/bufferline.nvim",
-    version = "*",
-    dependencies = "nvim-tree/nvim-web-devicons",
-    config = function()
-      require("bufferline").setup({})
-    end,
-  },
+
   {
     "nvim-tree/nvim-web-devicons",
     lazy = true,
+  },
+
+  {
+    "akinsho/bufferline.nvim",
+    version = "*",
+    dependencies = { "nvim-tree/nvim-web-devicons" },
+    config = function()
+      require("bufferline").setup({})
+    end,
   },
 
   {
@@ -429,10 +457,9 @@ require("lazy").setup({
 
         bmap("<CR>", api.node.open.edit, "Open")
         bmap("o",    api.node.open.edit, "Open")
-        bmap("t",    api.node.open.tab, "Open: New Tab")
-
-        bmap("v", api.node.open.vertical,   "Open: Vertical Split")
-        bmap("s", api.node.open.horizontal, "Open: Horizontal Split")
+        bmap("t",    api.node.open.tab,  "Open: New Tab")
+        bmap("v",    api.node.open.vertical,   "Open: Vertical Split")
+        bmap("s",    api.node.open.horizontal, "Open: Horizontal Split")
 
         bmap("<C-Left>",  "<C-w>h", "Focus Left")
         bmap("<C-Right>", "<C-w>l", "Focus Right")
@@ -452,14 +479,6 @@ require("lazy").setup({
         renderer = {
           group_empty = true,
           highlight_git = true,
-          icons = {
-            show = {
-              file = true,
-              folder = true,
-              folder_arrow = true,
-              git = true,
-            },
-          },
         },
         view = {
           width = 34,
@@ -514,6 +533,7 @@ require("lazy").setup({
 
   {
     "nvim-treesitter/nvim-treesitter",
+    lazy = false,
     build = ":TSUpdate",
     config = function()
       require("nvim-treesitter").setup({
@@ -619,7 +639,6 @@ require("lazy").setup({
       return {
         provider = "local_openai",
         auto_suggestions_provider = "local_openai",
-
         providers = {
           local_openai = {
             __inherited_from = "openai",
@@ -633,13 +652,8 @@ require("lazy").setup({
             },
           },
         },
-
-        input = {
-          provider = "dressing",
-        },
-        selector = {
-          provider = "telescope",
-        },
+        input = { provider = "dressing" },
+        selector = { provider = "telescope" },
       }
     end,
   },
@@ -654,15 +668,16 @@ vim.api.nvim_create_autocmd("VimEnter", {
     vim.cmd.cd(data.file)
     vim.cmd.enew()
     require("nvim-tree.api").tree.open()
-      vim.cmd.wincmd("p")
-    end,
+    vim.cmd.wincmd("p")
+  end,
 })
 
 local builtin = require("telescope.builtin")
 
-map("n", "<M-Right>", "<cmd>BufferLineCycleNext<CR>", { desc = "BufferLineCycleNext" })
-map("n", "<M-Left>", "<cmd>BufferLineCyclePrev<CR>", { desc = "BufferLineCyclePrev" })
-map("n", "<leader>bd", "<cmd>bdelete<CR>", { desc = "Delete Buffer Line" })
+map("n", "<M-Right>", "<cmd>BufferLineCycleNext<CR>", { desc = "Next buffer" })
+map("n", "<M-Left>",  "<cmd>BufferLineCyclePrev<CR>", { desc = "Previous buffer" })
+map("n", "<leader>bd", "<cmd>bdelete<CR>", { desc = "Delete buffer" })
+
 map("n", "<C-f>", builtin.live_grep, { desc = "Live grep in project" })
 map("n", "<leader>ff", builtin.find_files, { desc = "Find files" })
 map("n", "<leader>fg", builtin.live_grep, { desc = "Grep text" })
@@ -673,16 +688,12 @@ map("n", "<C-n>", "<cmd>NvimTreeToggle<CR>", opts)
 map("n", "<leader>e", "<cmd>NvimTreeFocus<CR>", opts)
 map("n", "<Esc>", "<cmd>nohlsearch<CR>", opts)
 
--- AI keybindings
 map("n", "<leader>la",   "<cmd>AvanteAsk<CR>",  { noremap = true, silent = true, desc = "LLM Ask" })
 map("v", "<leader>la",   ":AvanteAsk<CR>",      { noremap = true, silent = true, desc = "LLM Ask (selection)" })
-
 map("n", "<leader>llm",  "<cmd>AvanteAsk<CR>",  { noremap = true, silent = true, desc = "LLM Ask" })
 map("v", "<leader>llm",  ":AvanteAsk<CR>",      { noremap = true, silent = true, desc = "LLM Ask (selection)" })
-
 map("n", "<leader>lc",   "<cmd>AvanteChat<CR>", { noremap = true, silent = true, desc = "LLM Chat" })
 map("v", "<leader>lc",   ":AvanteChat<CR>",     { noremap = true, silent = true, desc = "LLM Chat (selection)" })
-
 map("n", "<leader>chat", "<cmd>AvanteChat<CR>", { noremap = true, silent = true, desc = "LLM Chat" })
 map("v", "<leader>chat", ":AvanteChat<CR>",     { noremap = true, silent = true, desc = "LLM Chat (selection)" })
 
@@ -700,7 +711,7 @@ local servers = {
 
 for _, server in ipairs(servers) do
   vim.lsp.config(server, {
-    capabilities = capabilities
+    capabilities = capabilities,
   })
   vim.lsp.enable(server)
 end
@@ -773,17 +784,17 @@ Main keybindings:
   Ctrl+Up       Focus upper pane
   Ctrl+Down     Focus lower pane
 
-File tree behavior:
-  Enter / o / t on a file -> open in NEW TAB
-  v -> open in vertical split
-  s -> open in horizontal split
-
-Useful Neovim keys:
+Useful keys:
   <leader>ff    Find files
   <leader>fg    Grep text
   <leader>fb    Buffers
   <leader>fh    Help tags
   <leader>fm    Format buffer
+  <leader>bd    Delete buffer
+  Alt+Left      Previous buffer
+  Alt+Right     Next buffer
+
+LSP:
   gd            Go to definition
   gr            References
   K             Hover
@@ -801,9 +812,6 @@ Open Neovim:
   # or
   nvim
 
-If Ctrl+Arrow does not work in your terminal, use:
-  Ctrl+h / Ctrl+j / Ctrl+k / Ctrl+l
-
 ============================================================
 
 EOF
@@ -819,6 +827,7 @@ main() {
   setup_pkg_manager
   ensure_local_bin
   install_system_packages
+  install_modern_neovim
   install_lazy_nvim
   setup_aliases
   setup_llm_env
