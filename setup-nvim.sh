@@ -306,6 +306,24 @@ setup_llm_env() {
   fi
 }
 
+setup_user_npm_prefix() {
+  if ! require_cmd npm; then
+    return 0
+  fi
+  
+  mkdir -p "${HOME}/.local/bin"
+  mkdir -p "${HOME}/.local/lib"
+  mkdir -p "${HOME}/.local/share"
+  append_line_if_missing "${HOME}/.bashrc" 'export PATH="$HOME/.local/bin:$PATH"'
+  append_line_if_missing "${HOME}/.bashrc" 'export NPM_CONFIG_PREFIX="$HOME/.local"'
+
+  if [ -f "${HOME}/.zshrc" ] || [ "${SHELL##*/}" = "zsh" ]; then
+    append_line_if_missing "${HOME}/.zshrc" 'export PATH="$HOME/.local.bin:$PATH"'
+    append_line_if_missing "${HOME}/.zshrc" 'export NPM_CONFIG_PREFIX="$HOME/.local"'
+  fi
+  npm config set prefix "${HOME}/.local" --location=user
+}
+
 write_nvim_config() {
   local config_dir="${HOME}/.config/nvim"
   local init_file="${config_dir}/init.lua"
@@ -376,7 +394,14 @@ map("n", "<leader>tq", "<cmd>tabclose<CR>", opts)
 
 require("lazy").setup({
   { "nvim-lua/plenary.nvim" },
-
+  {
+    "akinsho/bufferline.nvim",
+    version = "*",
+    dependencies = "nvim-tree/nvim-web-devicons",
+    config = function()
+      require("bufferline").setup({})
+    end,
+  },
   {
     "nvim-tree/nvim-web-devicons",
     lazy = true,
@@ -402,8 +427,8 @@ require("lazy").setup({
 
         api.config.mappings.default_on_attach(bufnr)
 
-        bmap("<CR>", api.node.open.tab, "Open: New Tab")
-        bmap("o",    api.node.open.tab, "Open: New Tab")
+        bmap("<CR>", api.node.open.edit, "Open")
+        bmap("o",    api.node.open.edit, "Open")
         bmap("t",    api.node.open.tab, "Open: New Tab")
 
         bmap("v", api.node.open.vertical,   "Open: Vertical Split")
@@ -491,7 +516,7 @@ require("lazy").setup({
     "nvim-treesitter/nvim-treesitter",
     build = ":TSUpdate",
     config = function()
-      require("nvim-treesitter.configs").setup({
+      require("nvim-treesitter").setup({
         ensure_installed = {
           "bash",
           "lua",
@@ -620,8 +645,24 @@ require("lazy").setup({
   },
 })
 
+vim.api.nvim_create_autocmd("VimEnter", {
+  callback = function(data)
+    local is_directory = vim.fn.isdirectory(data.file) == 1
+    if not is_directory then
+      return
+    end
+    vim.cmd.cd(data.file)
+    vim.cmd.enew()
+    require("nvim-tree.api").tree.open()
+      vim.cmd.wincmd("p")
+    end,
+})
+
 local builtin = require("telescope.builtin")
 
+map("n", "<M-Right>", "<cmd>BufferLineCycleNext<CR>", { desc = "BufferLineCycleNext" })
+map("n", "<M-Left>", "<cmd>BufferLineCyclePrev<CR>", { desc = "BufferLineCyclePrev" })
+map("n", "<leader>bd", "<cmd>bdelete<CR>", { desc = "Delete Buffer Line" })
 map("n", "<C-f>", builtin.live_grep, { desc = "Live grep in project" })
 map("n", "<leader>ff", builtin.find_files, { desc = "Find files" })
 map("n", "<leader>fg", builtin.live_grep, { desc = "Grep text" })
@@ -646,7 +687,6 @@ map("n", "<leader>chat", "<cmd>AvanteChat<CR>", { noremap = true, silent = true,
 map("v", "<leader>chat", ":AvanteChat<CR>",     { noremap = true, silent = true, desc = "LLM Chat (selection)" })
 
 local capabilities = require("cmp_nvim_lsp").default_capabilities()
-local lspconfig = require("lspconfig")
 
 local servers = {
   "gopls",
@@ -659,9 +699,10 @@ local servers = {
 }
 
 for _, server in ipairs(servers) do
-  lspconfig[server].setup({
-    capabilities = capabilities,
+  vim.lsp.config(server, {
+    capabilities = capabilities
   })
+  vim.lsp.enable(server)
 end
 
 vim.keymap.set("n", "gd", vim.lsp.buf.definition, { desc = "Go to definition" })
@@ -782,6 +823,7 @@ main() {
   setup_aliases
   setup_llm_env
   write_nvim_config
+  setup_user_npm_prefix
   install_common_language_tools
   run_headless_sync
   post_install_notes
