@@ -318,7 +318,7 @@ setup_user_npm_prefix() {
   append_line_if_missing "${HOME}/.bashrc" 'export NPM_CONFIG_PREFIX="$HOME/.local"'
 
   if [ -f "${HOME}/.zshrc" ] || [ "${SHELL##*/}" = "zsh" ]; then
-    append_line_if_missing "${HOME}/.zshrc" 'export PATH="$HOME/.local.bin:$PATH"'
+    append_line_if_missing "${HOME}/.zshrc" 'export PATH="$HOME/.local/bin:$PATH"'
     append_line_if_missing "${HOME}/.zshrc" 'export NPM_CONFIG_PREFIX="$HOME/.local"'
   fi
   npm config set prefix "${HOME}/.local" --location=user
