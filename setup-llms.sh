@@ -540,7 +540,7 @@ if [[ "${LLM_BACKEND:-llama_cpp}" == "llama_cpp" ]]; then
   cat > "${LLAMA_SWAP_CFG}" <<YAML
 healthCheckTimeout: 300
 logLevel: info
-logToStdout: true
+logToStdout: proxy
 
 models:
   ${MODEL_QWEN15_ALIAS}:
@@ -643,7 +643,7 @@ else
   cat > "${LLAMA_SWAP_CFG}" <<YAML
 healthCheckTimeout: 300
 logLevel: info
-logToStdout: true
+logToStdout: proxy
 
 models:
   ${MODEL_QWEN15_ALIAS}:
