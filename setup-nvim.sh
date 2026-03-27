@@ -733,7 +733,6 @@ install_common_language_tools() {
     npm install -g \
       prettier \
       pyright \
-      bash-language-server \
       typescript \
       typescript-language-server || true
   else
